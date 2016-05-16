@@ -72,18 +72,21 @@ def readFile(f):
     This handles UTF-8, which is itself an ASCII extension, so also ASCII.
     """
     try:
-        source = codecs.open(f, 'r', encoding='utf-16')
-        source.readline() # Read one line to ensure correct encoding
-    except UnicodeError:
         try:
-            source = codecs.open(f, 'r', encoding='utf-8')
+            source = codecs.open(f, 'r', encoding='utf-16')
             source.readline() # Read one line to ensure correct encoding
         except UnicodeError:
-            source = codecs.open(f, 'r')
-            source.readline() # Read one line to ensure correct encoding
-    source.readline() # header junk
-    source.readline() # header junk
-
+            try:
+                source = codecs.open(f, 'r', encoding='utf-8')
+                source.readline() # Read one line to ensure correct encoding
+            except UnicodeError:
+                source = codecs.open(f, 'r')
+                source.readline() # Read one line to ensure correct encoding
+        source.readline() # header junk
+        source.readline() # header junk
+    except Exception:
+        source.close()
+        raise
     return source
 
 
@@ -604,40 +607,44 @@ class TextGrid(object):
         indicated by string f
         """
         source = readFile(f)
-        self.minTime = round(float(source.readline().split()[2]), 5)
-        self.maxTime = round(float(source.readline().split()[2]), 5)
-        source.readline() # more header junk
-        m = int(source.readline().rstrip().split()[2]) # will be self.n
-        source.readline()
-        for i in range(m): # loop over grids
+        try:
+            self.minTime = round(float(source.readline().split()[2]), 5)
+            self.maxTime = round(float(source.readline().split()[2]), 5)
+            source.readline() # more header junk
+            m = int(source.readline().rstrip().split()[2]) # will be self.n
             source.readline()
-            if source.readline().rstrip().split()[2] == '"IntervalTier"':
-                inam = source.readline().rstrip().split(' = ')[1].strip('"')
-                imin = round(float(source.readline().rstrip().split()[2]), 5)
-                imax = round(float(source.readline().rstrip().split()[2]), 5)
-                itie = IntervalTier(inam)
-                for j in range(int(source.readline().rstrip().split()[3])):
-                    source.readline().rstrip().split() # header junk
-                    jmin = round(float(source.readline().rstrip().split()[2]), 5)
-                    jmax = round(float(source.readline().rstrip().split()[2]), 5)
-                    jmrk = _getMark(source)
-                    if jmin < jmax: # non-null
-                        itie.addInterval(Interval(jmin, jmax, jmrk))
-                self.append(itie)
-            else: # pointTier
-                inam = source.readline().rstrip().split(' = ')[1].strip('"')
-                imin = round(float(source.readline().rstrip().split()[2]), 5)
-                imax = round(float(source.readline().rstrip().split()[2]), 5)
-                itie = PointTier(inam)
-                n = int(source.readline().rstrip().split()[3])
-                for j in range(n):
-                    source.readline().rstrip() # header junk
-                    jtim = round(float(source.readline().rstrip().split()[2]),
-                                                                           5)
-                    jmrk = _getMark(source)
-                    itie.addPoint(Point(jtim, jmrk))
-                self.append(itie)
-        source.close()
+            for i in range(m): # loop over grids
+                source.readline()
+                if source.readline().rstrip().split()[2] == '"IntervalTier"':
+                    inam = source.readline().rstrip().split(' = ')[1].strip('"')
+                    imin = round(float(source.readline().rstrip().split()[2]), 5)
+                    imax = round(float(source.readline().rstrip().split()[2]), 5)
+                    itie = IntervalTier(inam)
+                    for j in range(int(source.readline().rstrip().split()[3])):
+                        source.readline().rstrip().split() # header junk
+                        jmin = round(float(source.readline().rstrip().split()[2]), 5)
+                        jmax = round(float(source.readline().rstrip().split()[2]), 5)
+                        jmrk = _getMark(source)
+                        if jmin < jmax: # non-null
+                            itie.addInterval(Interval(jmin, jmax, jmrk))
+                    self.append(itie)
+                else: # pointTier
+                    inam = source.readline().rstrip().split(' = ')[1].strip('"')
+                    imin = round(float(source.readline().rstrip().split()[2]), 5)
+                    imax = round(float(source.readline().rstrip().split()[2]), 5)
+                    itie = PointTier(inam)
+                    n = int(source.readline().rstrip().split()[3])
+                    for j in range(n):
+                        source.readline().rstrip() # header junk
+                        jtim = round(float(source.readline().rstrip().split()[2]),
+                                                                               5)
+                        jmrk = _getMark(source)
+                        itie.addPoint(Point(jtim, jmrk))
+                    self.append(itie)
+            source.close()
+        except Exception:
+            source.close()
+            raise
 
     def write(self, f, null=''):
         """
@@ -734,51 +741,55 @@ class MLF(object):
     def read(self, f, samplerate):
         source = open(f, 'r') # HTK returns ostensible ASCII
         samplerate = float(samplerate)
-        source.readline() # header
-        while True: # loop over text
-            name = re.match('\"(.*)\"', source.readline().rstrip())
-            if name:
-                name = name.groups()[0]
-                grid = TextGrid(name)
-                phon = IntervalTier(name='phones')
-                word = IntervalTier(name='words')
-                wmrk = ''
-                wsrt = 0.
-                wend = 0.
-                while 1: # loop over the lines in each grid
-                    line = source.readline().rstrip().split()
-                    if len(line) == 4: # word on this baby
-                        pmin = round(float(line[0]) / samplerate, 5)
-                        pmax = round(float(line[1]) / samplerate, 5)
-                        if pmin == pmax:
-                            raise ValueError('null duration interval')
-                        phon.add(pmin, pmax, line[2])
-                        if wmrk:
-                            word.add(wsrt, wend, wmrk)
-                        wmrk = decode(line[3])
-                        wsrt = pmin
-                        wend = pmax
-                    elif len(line) == 3: # just phone
-                        pmin = round(float(line[0]) / samplerate, 5)
-                        pmax = round(float(line[1]) / samplerate, 5)
-                        if line[2] == 'sp' and pmin != pmax:
+        try:
+            source.readline() # header
+            while True: # loop over text
+                name = re.match('\"(.*)\"', source.readline().rstrip())
+                if name:
+                    name = name.groups()[0]
+                    grid = TextGrid(name)
+                    phon = IntervalTier(name='phones')
+                    word = IntervalTier(name='words')
+                    wmrk = ''
+                    wsrt = 0.
+                    wend = 0.
+                    while 1: # loop over the lines in each grid
+                        line = source.readline().rstrip().split()
+                        if len(line) == 4: # word on this baby
+                            pmin = round(float(line[0]) / samplerate, 5)
+                            pmax = round(float(line[1]) / samplerate, 5)
+                            if pmin == pmax:
+                                raise ValueError('null duration interval')
+                            phon.add(pmin, pmax, line[2])
                             if wmrk:
                                 word.add(wsrt, wend, wmrk)
-                            wmrk = decode(line[2])
+                            wmrk = decode(line[3])
                             wsrt = pmin
                             wend = pmax
-                        elif pmin != pmax:
-                            phon.add(pmin, pmax, line[2])
-                        wend = pmax
-                    else: # it's a period
-                        word.add(wsrt, wend, wmrk)
-                        self.grids.append(grid)
-                        break
-                grid.append(phon)
-                grid.append(word)
-            else:
-                source.close()
-                break
+                        elif len(line) == 3: # just phone
+                            pmin = round(float(line[0]) / samplerate, 5)
+                            pmax = round(float(line[1]) / samplerate, 5)
+                            if line[2] == 'sp' and pmin != pmax:
+                                if wmrk:
+                                    word.add(wsrt, wend, wmrk)
+                                wmrk = decode(line[2])
+                                wsrt = pmin
+                                wend = pmax
+                            elif pmin != pmax:
+                                phon.add(pmin, pmax, line[2])
+                            wend = pmax
+                        else: # it's a period
+                            word.add(wsrt, wend, wmrk)
+                            self.grids.append(grid)
+                            break
+                    grid.append(phon)
+                    grid.append(word)
+                else:
+                    source.close()
+                    break
+        except Exception:
+            source.close()
+            raise
 
     def write(self, prefix=''):
         """
